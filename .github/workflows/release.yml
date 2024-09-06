@@ -5,7 +5,6 @@ on:
   push:
     tags:
       - v*
-  workflow_dispatch:
 
 env:
   FORCE_COLOR: true
@@ -18,7 +17,7 @@ jobs:
       - name: Install Go
         uses: actions/setup-go@v3
         with:
-          go-version: "1.20"
+          go-version: "1.21"
 
       - name: Checkout code
         uses: actions/checkout@v3
@@ -57,7 +56,7 @@ jobs:
       - name: Install Go
         uses: actions/setup-go@v3
         with:
-          go-version: "1.20"
+          go-version: "1.21"
 
       - id: go-cache-paths
         run: |
@@ -112,7 +111,7 @@ jobs:
       - name: Install Go
         uses: actions/setup-go@v3
         with:
-          go-version: "1.20"
+          go-version: "1.21"
 
       - name: Checkout code
         uses: actions/checkout@v3

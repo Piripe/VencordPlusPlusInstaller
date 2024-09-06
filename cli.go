@@ -15,13 +15,12 @@ import (
 	"github.com/fatih/color"
 	"github.com/manifoldco/promptui"
 	"os"
-	"runtime"
+	"slices"
 	"strings"
 	"vencordinstaller/buildinfo"
 )
 
 var discords []any
-var interactive = false
 
 func isValidBranch(branch string) bool {
 	switch branch {
@@ -95,9 +94,7 @@ func main() {
 
 	install, uninstall, update, installOpenAsar, uninstallOpenAsar := *installFlag, *uninstallFlag, *updateFlag, *installOpenAsarFlag, *uninstallOpenAsarFlag
 	switches := []*bool{&install, &update, &uninstall, &installOpenAsar, &uninstallOpenAsar}
-	if !SliceContainsFunc(switches, func(b *bool) bool { return *b }) {
-		interactive = true
-
+	if !slices.ContainsFunc(switches, func(b *bool) bool { return *b }) {
 		go func() {
 			<-SelfUpdateCheckDoneChan
 			if IsSelfOutdated {
@@ -136,7 +133,7 @@ func main() {
 			exitSuccess()
 		}
 
-		*switches[SliceIndex(choices, choice)] = true
+		*switches[slices.Index(choices, choice)] = true
 	}
 
 	var err error
@@ -179,28 +176,19 @@ func main() {
 	exitSuccess()
 }
 
-func exit(status int) {
-	if runtime.GOOS == "windows" && IsDoubleClickRun() && interactive {
-		fmt.Print("Press Enter to exit")
-		var b byte
-		_, _ = fmt.Scanf("%v", &b)
-	}
-	os.Exit(status)
-}
-
 func exitSuccess() {
 	color.HiGreen("✔ Success!")
-	exit(0)
+	os.Exit(0)
 }
 
 func exitFailure() {
 	color.HiRed("❌ Failed!")
-	exit(1)
+	os.Exit(1)
 }
 
 func handlePromptError(err error) {
 	if errors.Is(err, promptui.ErrInterrupt) {
-		exit(0)
+		os.Exit(0)
 	}
 
 	Log.FatalIfErr(err)
@@ -251,7 +239,7 @@ func PromptDiscord(action, dir, branch string) *DiscordInstall {
 	handlePromptError(err)
 
 	if choice != "Custom Location" {
-		return discords[SliceIndex(items, choice)].(*DiscordInstall)
+		return discords[slices.Index(items, choice)].(*DiscordInstall)
 	}
 
 	for {

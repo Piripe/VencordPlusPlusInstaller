@@ -16,7 +16,7 @@ const ReleaseUrlFallback = "https://vencord.dev/releases/vencord"
 const InstallerReleaseUrl = "https://api.github.com/repos/Piripe/VencordPlusPlusInstaller/releases/latest"
 const InstallerReleaseUrlFallback = "https://vencord.dev/releases/installer"
 
-var UserAgent = "VencordInstaller/" + buildinfo.InstallerGitHash + " (https://github.com/Vencord/Installer)"
+var UserAgent = "VencordInstaller/" + buildinfo.InstallerGitHash + " (https://github.com/Piripe/VencordPlusPlusInstaller)"
 
 var (
 	DiscordGreen  = color.RGBA{R: 0x2D, G: 0x7C, B: 0x46, A: 0xFF}

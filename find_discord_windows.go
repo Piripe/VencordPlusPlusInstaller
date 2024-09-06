@@ -8,11 +8,12 @@ package main
 
 import (
 	"errors"
-	"fmt"
+	"golang.org/x/sys/windows"
 	"os"
-	"os/exec"
 	path "path/filepath"
 	"strings"
+	"sync"
+	"unsafe"
 )
 
 var windowsNames = map[string]string{
@@ -22,11 +23,13 @@ var windowsNames = map[string]string{
 	"dev":    "DiscordDevelopment",
 }
 
+var killLock sync.Mutex
+
 func ParseDiscord(p, branch string) *DiscordInstall {
 	entries, err := os.ReadDir(p)
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
-			fmt.Println("Error during readdir "+p+":", err)
+			Log.Warn("Error during readdir "+p+":", err)
 		}
 		return nil
 	}
@@ -42,7 +45,7 @@ func ParseDiscord(p, branch string) *DiscordInstall {
 			app := path.Join(resources, "app")
 			if app > appPath {
 				appPath = app
-				isPatched = ExistsFile(app) || IsDirectory(path.Join(resources, "app.asar"))
+				isPatched = ExistsFile(path.Join(resources, "_app.asar"))
 			}
 		}
 	}
@@ -70,14 +73,14 @@ func FindDiscords() []any {
 
 	appData := os.Getenv("LOCALAPPDATA")
 	if appData == "" {
-		fmt.Println("%LOCALAPPDATA% is empty???????")
+		Log.Error("%LOCALAPPDATA% is empty???????")
 		return discords
 	}
 
 	for branch, dirname := range windowsNames {
 		p := path.Join(appData, dirname)
 		if discord := ParseDiscord(p, branch); discord != nil {
-			fmt.Println("Found Discord install at ", p)
+			Log.Debug("Found Discord install at ", p)
 			discords = append(discords, discord)
 		}
 	}
@@ -85,10 +88,30 @@ func FindDiscords() []any {
 }
 
 func PreparePatch(di *DiscordInstall) {
+	killLock.Lock()
+	defer killLock.Unlock()
+	
 	name := windowsNames[di.branch]
-	fmt.Println("Killing " + name + "...")
+	Log.Debug("Trying to kill", name)
+	pid := findProcessIdByName(name + ".exe")
+	if pid == 0 {
+		Log.Debug("Didn't find process matching name")
+		return
+	}
 
-	_ = exec.Command("powershell", "Stop-Process -Name "+name).Run()
+	proc, err := os.FindProcess(int(pid))
+	if err != nil {
+		Log.Warn("Failed to find process with pid", pid)
+		return
+	}
+
+	err = proc.Kill()
+	if err != nil {
+		Log.Warn("Failed to kill", name+":", err)
+	} else {
+		Log.Debug("Waiting for", name, "to exit")
+		_, _ = proc.Wait()
+	}
 }
 
 func FixOwnership(_ string) error {
@@ -107,4 +130,22 @@ func CheckScuffedInstall() bool {
 		}
 	}
 	return false
+}
+
+func findProcessIdByName(name string) uint32 {
+	snapshot, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
+	if err != nil {
+		return 0
+	}
+
+	procEntry := windows.ProcessEntry32{Size: uint32(unsafe.Sizeof(windows.ProcessEntry32{}))}
+	for {
+		err = windows.Process32Next(snapshot, &procEntry)
+		if err != nil {
+			return 0
+		}
+		if windows.UTF16ToString(procEntry.ExeFile[:]) == name {
+			return procEntry.ProcessID
+		}
+	}
 }

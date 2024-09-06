@@ -8,35 +8,56 @@ package main
 
 import (
 	"errors"
-	"fmt"
 	"os"
 	"runtime"
 	"strings"
 	"syscall"
 )
 
-func ArrayIncludes[T comparable](arr []T, v T) bool {
-	for _, e := range arr {
-		if e == v {
-			return true
+func SliceMap[T, U any](arr []T, mapper func(T) U) []U {
+	result := make([]U, len(arr))
+	for i := range arr {
+		result[i] = mapper(arr[i])
+	}
+	return result
+}
+
+func SliceIndexFunc[T any](slice []T, fn func(T) bool) int {
+	for i, e := range slice {
+		if fn(e) {
+			return i
 		}
 	}
-	return false
+	return -1
+}
+
+func SliceIndex[T comparable](slice []T, item T) int {
+	return SliceIndexFunc(slice, func(e T) bool {
+		return e == item
+	})
+}
+
+func SliceContainsFunc[T any](slice []T, fn func(T) bool) bool {
+	return SliceIndexFunc(slice, fn) != -1
+}
+
+func SliceContains[T comparable](slice []T, item T) bool {
+	return SliceIndex(slice, item) != -1
 }
 
 func ExistsFile(path string) bool {
 	_, err := os.Stat(path)
-	fmt.Println("Checking if", path, "exists:", Ternary(err == nil, "Yes", "No"))
+	Log.Debug("Checking if", path, "exists:", Ternary(err == nil, "Yes", "No"))
 	return err == nil
 }
 
 func IsDirectory(path string) bool {
 	s, err := os.Stat(path)
 	if err != nil {
-		fmt.Println("Error while checking if", path, "is directory:", err)
+		Log.Error("Error while checking if", path, "is directory:", err)
 		return false
 	}
-	fmt.Println("Checking if", path, "is directory:", Ternary(s.IsDir(), "Yes", "No"))
+	Log.Debug("Checking if", path, "is directory:", Ternary(s.IsDir(), "Yes", "No"))
 	return s.IsDir()
 }
 
@@ -81,9 +102,6 @@ func CheckIfErrIsCauseItsBusyRn(err error) error {
 	return err
 }
 
-func Unwrap[T any](v T, err error) T {
-	if err != nil {
-		panic(err)
-	}
-	return v
+func Prepend[T any](slice []T, elems ...T) []T {
+	return append(elems, slice...)
 }

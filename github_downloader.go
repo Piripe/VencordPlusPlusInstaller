@@ -7,7 +7,6 @@
 package main
 
 import (
-	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,9 +14,9 @@ import (
 	"net/http"
 	"os"
 	path "path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 )
 
 type GithubRelease struct {
@@ -38,11 +37,11 @@ var LatestHash = "Unknown"
 var IsDevInstall bool
 
 func GetGithubRelease(url, fallbackUrl string) (*GithubRelease, error) {
-	fmt.Println("Fetching", url)
+	Log.Debug("Fetching", url)
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		fmt.Println("Failed to create Request", err)
+		Log.Error("Failed to create Request", err)
 		return nil, err
 	}
 
@@ -50,7 +49,7 @@ func GetGithubRelease(url, fallbackUrl string) (*GithubRelease, error) {
 
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
-		fmt.Println("Failed to send Request", err)
+		Log.Error("Failed to send Request", err)
 		return nil, err
 	}
 
@@ -70,14 +69,14 @@ func GetGithubRelease(url, fallbackUrl string) (*GithubRelease, error) {
 		}
 
 		err = errors.New(res.Status)
-		fmt.Println(url, "returned Non-OK status", GithubError)
+		Log.Error(url, "returned Non-OK status", GithubError)
 		return nil, err
 	}
 
 	var data GithubRelease
 
 	if err = json.NewDecoder(res.Body).Decode(&data); err != nil {
-		fmt.Println("Failed to decode GitHub JSON Response", err)
+		Log.Error("Failed to decode GitHub JSON Response", err)
 		return nil, err
 	}
 
@@ -88,7 +87,7 @@ func InitGithubDownloader() {
 	GithubDoneChan = make(chan bool, 1)
 
 	IsDevInstall = os.Getenv("VENCORD_DEV_INSTALL") == "1"
-	fmt.Println("Is Dev Install: ", IsDevInstall)
+	Log.Debug("Is Dev Install: ", IsDevInstall)
 	if IsDevInstall {
 		GithubDoneChan <- true
 		return
@@ -110,94 +109,98 @@ func InitGithubDownloader() {
 
 		i := strings.LastIndex(data.Name, " ") + 1
 		LatestHash = data.Name[i:]
-		fmt.Println("Finished fetching GitHub Data")
-		fmt.Println("Latest hash is", LatestHash, "Local Install is", Ternary(LatestHash == InstalledHash, "up to date!", "outdated!"))
+		Log.Debug("Finished fetching GitHub Data")
+		Log.Debug("Latest hash is", LatestHash, "Local Install is", Ternary(LatestHash == InstalledHash, "up to date!", "outdated!"))
 	}()
 
-	// Check hash of installed version if exists
-	f, err := os.Open(Patcher)
+	// either .asar file or directory with main.js file (in DEV)
+	VencordFile := VencordDirectory
+
+	stat, err := os.Stat(VencordFile)
 	if err != nil {
 		return
 	}
-	//goland:noinspection GoUnhandledErrorResult
-	defer f.Close()
 
-	fmt.Println("Found existing Vencord Install. Checking for hash...")
-	scanner := bufio.NewScanner(f)
-	if scanner.Scan() {
-		line := scanner.Text()
-		if strings.HasPrefix(line, "// Vencord ") {
-			InstalledHash = line[11:]
-			fmt.Println("Existing hash is", InstalledHash)
-		} else {
-			fmt.Println("Didn't find hash")
-		}
+	// dev
+	if stat.IsDir() {
+		VencordFile = path.Join(VencordFile, "main.js")
+	}
+
+	// Check hash of installed version if exists
+	b, err := os.ReadFile(VencordFile)
+	if err != nil {
+		return
+	}
+
+	Log.Debug("Found existing Vencord Install. Checking for hash...")
+
+	re := regexp.MustCompile(`// Vencord (\w+)`)
+	match := re.FindSubmatch(b)
+	if match != nil {
+		InstalledHash = string(match[1])
+		Log.Debug("Existing hash is", InstalledHash)
+
+	} else {
+		Log.Debug("Didn't find hash")
+
 	}
 }
 
 func installLatestBuilds() (retErr error) {
-	fmt.Println("Installing latest builds...")
+	Log.Debug("Installing latest builds...")
 
-	// create an empty package.json file in our files dir.
-	// without this, node will walk up the file tree and search for a package.json in the
-	// parent folders. This might lead to issues if the user for example has ~/package.json
-	// with type: "module" in it
-	pkgJsonFile := path.Join(FilesDir, "package.json")
-	err := os.WriteFile(pkgJsonFile, []byte("{}"), 0644)
-	if err != nil {
-		fmt.Println("Failed to create", pkgJsonFile, err)
+	if IsDevInstall {
+		Log.Debug("Skipping due to dev install")
+		return
 	}
 
-	var wg sync.WaitGroup
-
+	downloadUrl := ""
 	for _, ass := range ReleaseData.Assets {
-		if strings.HasPrefix(ass.Name, "patcher.js") ||
-			strings.HasPrefix(ass.Name, "preload.js") ||
-			strings.HasPrefix(ass.Name, "renderer.js") ||
-			strings.HasPrefix(ass.Name, "renderer.css") {
-			wg.Add(1)
-			ass := ass // Need to do this to not have the variable be overwritten halfway through
-			go func() {
-				defer wg.Done()
-				fmt.Println("Downloading file", ass.Name)
-
-				res, err := http.Get(ass.DownloadURL)
-				if err == nil && res.StatusCode >= 300 {
-					err = errors.New(res.Status)
-				}
-				if err != nil {
-					fmt.Println("Failed to download", ass.Name+":", err)
-					retErr = err
-					return
-				}
-				outFile := path.Join(FilesDir, ass.Name)
-				out, err := os.OpenFile(outFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
-				if err != nil {
-					fmt.Println("Failed to create", outFile+":", err)
-					retErr = err
-					return
-				}
-				read, err := io.Copy(out, res.Body)
-				if err != nil {
-					fmt.Println("Failed to download to", outFile+":", err)
-					retErr = err
-					return
-				}
-				contentLength := res.Header.Get("Content-Length")
-				expected := strconv.FormatInt(read, 10)
-				if expected != contentLength {
-					err = errors.New("Unexpected end of input. Content-Length was " + contentLength + ", but I only read " + expected)
-					fmt.Println(err)
-					retErr = err
-					return
-				}
-			}()
+		if ass.Name == "desktop.asar" {
+			downloadUrl = ass.DownloadURL
+			break
 		}
 	}
 
-	wg.Wait()
-	fmt.Println("Done!")
-	_ = FixOwnership(FilesDir)
+	if downloadUrl == "" {
+		retErr = errors.New("Didn't find desktop.asar download link")
+		Log.Error(retErr)
+		return
+	}
+
+	Log.Debug("Downloading desktop.asar")
+
+	res, err := http.Get(downloadUrl)
+	if err == nil && res.StatusCode >= 300 {
+		err = errors.New(res.Status)
+	}
+	if err != nil {
+		Log.Error("Failed to download desktop.asar:", err)
+		retErr = err
+		return
+	}
+	out, err := os.OpenFile(VencordDirectory, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	if err != nil {
+		Log.Error("Failed to create", VencordDirectory+":", err)
+		retErr = err
+		return
+	}
+	read, err := io.Copy(out, res.Body)
+	if err != nil {
+		Log.Error("Failed to download to", VencordDirectory+":", err)
+		retErr = err
+		return
+	}
+	contentLength := res.Header.Get("Content-Length")
+	expected := strconv.FormatInt(read, 10)
+	if expected != contentLength {
+		err = errors.New("Unexpected end of input. Content-Length was " + contentLength + ", but I only read " + expected)
+		Log.Error(err.Error())
+		retErr = err
+		return
+	}
+
+	_ = FixOwnership(VencordDirectory)
 
 	InstalledHash = LatestHash
 	return
